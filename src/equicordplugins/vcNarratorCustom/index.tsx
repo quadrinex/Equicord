@@ -178,7 +178,7 @@ function TroubleshootingSettings() {
     );
 }
 
-function CustomSoundSettings({ soundKey, nameKey, title }: { soundKey: string; nameKey: string; title: string; }) {
+function CustomSoundSettings({ soundKey, nameKey }: { soundKey: string; nameKey: string; }) {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [busy, setBusy] = React.useState(false);
     const [, forceUpdate] = React.useReducer((count: number) => count + 1, 0);
@@ -236,7 +236,6 @@ function CustomSoundSettings({ soundKey, nameKey, title }: { soundKey: string; n
 
     return (
         <div className={cl("custom-sound")}>
-            <Forms.FormTitle tag="h3" className={cl("title")}>{title}</Forms.FormTitle>
             <Forms.FormText className={cl("custom-sound-text")}>
                 {hasCustomSound ? `Selected: ${customSoundName || "Custom audio"}` : "No custom sound selected."}
             </Forms.FormText>
@@ -744,7 +743,7 @@ const settings = definePluginSettings({
     },
     joinSound: {
         type: OptionType.COMPONENT,
-        component: () => <CustomSoundSettings soundKey="joinSound" nameKey="joinSoundName" title="Join sound" />,
+        component: () => <CustomSoundSettings soundKey="joinSound" nameKey="joinSoundName" />,
         default: "",
     },
     joinSoundName: {
@@ -755,12 +754,12 @@ const settings = definePluginSettings({
     },
     leaveMessage: {
         type: OptionType.STRING,
-        description: "Leave message. Use {{SOUND}} to play the selected sound.",
+        description: "Placeholders: {{USER}}, {{DISPLAY_NAME}}, {{NICKNAME}}, {{CHANNEL}}, {{SOUND}}.",
         default: "{{DISPLAY_NAME}} left",
     },
     leaveSound: {
         type: OptionType.COMPONENT,
-        component: () => <CustomSoundSettings soundKey="leaveSound" nameKey="leaveSoundName" title="Leave sound" />,
+        component: () => <CustomSoundSettings soundKey="leaveSound" nameKey="leaveSoundName" />,
         default: "",
     },
     leaveSoundName: {
@@ -771,12 +770,12 @@ const settings = definePluginSettings({
     },
     moveMessage: {
         type: OptionType.STRING,
-        description: "Move message. Use {{SOUND}} to play the selected sound.",
+        description: "Placeholders: {{USER}}, {{DISPLAY_NAME}}, {{NICKNAME}}, {{CHANNEL}}, {{SOUND}}.",
         default: "{{DISPLAY_NAME}} moved to {{CHANNEL}}",
     },
     moveSound: {
         type: OptionType.COMPONENT,
-        component: () => <CustomSoundSettings soundKey="moveSound" nameKey="moveSoundName" title="Move sound" />,
+        component: () => <CustomSoundSettings soundKey="moveSound" nameKey="moveSoundName" />,
         default: "",
     },
     moveSoundName: {
@@ -1064,7 +1063,7 @@ export default definePlugin({
     name: "VcNarratorCustom",
     description: "Announces when users join, leave, or move voice channels via narrator using TikTok TTS. Revamped and back from the dead.",
     tags: ["Accessibility", "Voice"],
-    authors: [Devs.Ven, Devs.Nyako, EquicordDevs.Loukios, EquicordDevs.examplegit],
+    authors: [Devs.Ven, Devs.Nyako, EquicordDevs.Loukios, EquicordDevs.examplegit, EquicordDevs.qdnx],
     settings,
     contextMenus: {
         "user-context": UserContextMenuPatch,
