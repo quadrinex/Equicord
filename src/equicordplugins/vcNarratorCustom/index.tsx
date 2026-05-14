@@ -71,6 +71,7 @@ const cl = classNameFactory("vc-narrator-");
 
 const API_BASE = "https://tiktok-tts-aio.exampleuser.workers.dev";
 const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "m4a", "aac", "flac", "webm", "wma", "mp4"];
+const SOUND_PLACEHOLDER = "{{SOUND}}";
 
 type LastApiCallStatus = {
     at: number;
@@ -177,12 +178,13 @@ function TroubleshootingSettings() {
     );
 }
 
-function CustomSoundSettings() {
+function CustomSoundSettings({ soundKey, nameKey, title }: { soundKey: string; nameKey: string; title: string; }) {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [busy, setBusy] = React.useState(false);
     const [, forceUpdate] = React.useReducer((count: number) => count + 1, 0);
-    const customSoundName = settings.store.customSoundName ?? "";
-    const hasCustomSound = typeof settings.store.customSound === "string" && settings.store.customSound.startsWith("data:audio/");
+    const customSound = settings.store[soundKey];
+    const customSoundName = settings.store[nameKey] ?? "";
+    const hasCustomSound = typeof customSound === "string" && customSound.startsWith("data:audio/");
 
     const uploadSound = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.currentTarget.files?.[0];
@@ -209,8 +211,8 @@ function CustomSoundSettings() {
                 return;
             }
 
-            settings.store.customSound = dataUri;
-            settings.store.customSoundName = file.name;
+            settings.store[soundKey] = dataUri;
+            settings.store[nameKey] = file.name;
             forceUpdate();
             showToast("Custom sound saved.");
         } catch {
@@ -225,7 +227,7 @@ function CustomSoundSettings() {
         if (!hasCustomSound) return;
 
         setBusy(true);
-        const audio = new Audio(settings.store.customSound);
+        const audio = new Audio(customSound);
         audio.volume = settings.store.volume;
         audio.onended = () => setBusy(false);
         audio.onerror = () => setBusy(false);
@@ -234,7 +236,7 @@ function CustomSoundSettings() {
 
     return (
         <div className={cl("custom-sound")}>
-            <Forms.FormTitle tag="h3" className={cl("title")}>Custom sound</Forms.FormTitle>
+            <Forms.FormTitle tag="h3" className={cl("title")}>{title}</Forms.FormTitle>
             <Forms.FormText className={cl("custom-sound-text")}>
                 {hasCustomSound ? `Selected: ${customSoundName || "Custom audio"}` : "No custom sound selected."}
             </Forms.FormText>
@@ -257,8 +259,8 @@ function CustomSoundSettings() {
                     size="small"
                     disabled={busy || !hasCustomSound}
                     onClick={() => {
-                        settings.store.customSound = "";
-                        settings.store.customSoundName = "";
+                        settings.store[soundKey] = "";
+                        settings.store[nameKey] = "";
                         forceUpdate();
                     }}
                 >
@@ -286,6 +288,7 @@ interface QueueItem {
     userId?: string;
     interruptKey?: string;
     useDefaultVoice?: boolean;
+    sound?: string;
 }
 const mainQueue: QueueItem[] = [];
 const stateQueue: QueueItem[] = [];
@@ -368,6 +371,7 @@ async function processQueue() {
             userId: intro.userId,
             interruptKey: action.interruptKey,
             useDefaultVoice: false,
+            sound: intro.sound ?? action.sound,
         };
         mainQueue.push(combined);
     }
@@ -378,7 +382,7 @@ async function processQueue() {
     onQueueChange?.();
 
     try {
-        await speak(item.text, item.userId, item.interruptKey, item.useDefaultVoice);
+        await speak(item.text, item.userId, item.interruptKey, item.useDefaultVoice, item.sound);
     } catch (e) {
         console.error("TTS Error:", e);
     }
@@ -391,7 +395,7 @@ async function processQueue() {
     }, delay);
 }
 
-function queueSpeak(text: string, userId?: string, interruptKey?: string, queue: "main" | "state" = "main", useDefaultVoice?: boolean) {
+function queueSpeak(text: string, userId?: string, interruptKey?: string, queue: "main" | "state" = "main", useDefaultVoice?: boolean, sound?: string) {
     if (text.trim().length === 0) return;
 
     const targetQueue = queue === "state" ? stateQueue : mainQueue;
@@ -408,12 +412,12 @@ function queueSpeak(text: string, userId?: string, interruptKey?: string, queue:
         interruptPlayback(interruptKey);
     }
 
-    targetQueue.push({ text, userId, interruptKey, useDefaultVoice });
+    targetQueue.push({ text, userId, interruptKey, useDefaultVoice, sound });
     onQueueChange?.();
     processQueue();
 }
 
-async function speak(text: string, userId?: string, interruptKey?: string, useDefaultVoice?: boolean): Promise<void> {
+async function speak(text: string, userId?: string, interruptKey?: string, useDefaultVoice?: boolean, sound?: string): Promise<void> {
     return new Promise(resolve => {
         const playAudio = (url: string, playbackRate: number) => new Promise<boolean>(resolveAudio => {
             const audio = new Audio(url);
@@ -442,50 +446,11 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
             audio.play().catch(stop);
         });
 
-        const playSequence = async (ttsUrl: string) => {
-            const { customSound, soundMode = "off" } = settings.store;
-            const hasCustomSound = typeof customSound === "string" && customSound.startsWith("data:audio/");
-
-            if (soundMode === "soundFirst" && hasCustomSound) {
-                const completed = await playAudio(customSound, 1);
-                if (!completed) {
-                    resolve();
-                    return;
-                }
-            }
-
-            const ttsCompleted = await playAudio(ttsUrl, settings.store.rate);
-            if (!ttsCompleted) {
-                resolve();
-                return;
-            }
-
-            if (soundMode === "ttsFirst" && hasCustomSound) {
-                await playAudio(customSound, 1);
-            }
-
-            if (currentAudio) {
-                currentAudio = null;
-                currentInterruptKey = undefined;
-                currentStop = null;
-            }
-            resolve();
-        };
-
-        void (async () => {
-            const voice = useDefaultVoice
-                ? DEFAULT_VOICE
-                : getVoiceForUser(userId, {
-                    userVoiceMap: settings.store.userVoiceMap,
-                    customVoice: settings.store.customVoice,
-                    defaultVoice: DEFAULT_VOICE,
-                });
-
-            const cacheKey = `${voice}_${text}`;
+        const getTtsUrl = async (speechText: string, voice: string) => {
+            const cacheKey = `${voice}_${speechText}`;
 
             if (ttsCache.has(cacheKey)) {
-                await playSequence(ttsCache.get(cacheKey)!);
-                return;
+                return ttsCache.get(cacheKey)!;
             }
 
             try {
@@ -493,8 +458,7 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
                 if (cachedBlob) {
                     const url = URL.createObjectURL(cachedBlob);
                     ttsCache.set(cacheKey, url);
-                    await playSequence(url);
-                    return;
+                    return url;
                 }
             } catch (err) {
                 console.error("Error accessing IndexedDB:", err);
@@ -508,7 +472,7 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
                     headers: { "Content-Type": "application/json" },
                     referrerPolicy: "no-referrer",
                     body: JSON.stringify({
-                        text: text,
+                        text: speechText,
                         voice: voice,
                         base64: true,
                     }),
@@ -517,8 +481,7 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
 
                 if (!response.ok) {
                     console.error(`TTS failed: ${response.status}`);
-                    resolve();
-                    return;
+                    return null;
                 }
 
                 const audioData = atob((await response.text()).trim());
@@ -533,12 +496,49 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
                 ttsCache.set(cacheKey, url);
                 setCachedVoiceInDB(cacheKey, blob).catch(console.error);
 
-                await playSequence(url);
+                return url;
             } catch (e) {
                 recordApiError(e);
                 console.error("TTS Network Error:", e);
-                resolve();
+                return null;
             }
+        };
+
+        const playSpeech = async (speechText: string, voice: string) => {
+            const trimmedText = speechText.trim();
+            if (!trimmedText) return true;
+
+            const url = await getTtsUrl(trimmedText, voice);
+            return !url || await playAudio(url, settings.store.rate);
+        };
+
+        void (async () => {
+            const voice = useDefaultVoice
+                ? DEFAULT_VOICE
+                : getVoiceForUser(userId, {
+                    userVoiceMap: settings.store.userVoiceMap,
+                    customVoice: settings.store.customVoice,
+                    defaultVoice: DEFAULT_VOICE,
+                });
+
+            const soundUrl = typeof sound === "string" && sound.startsWith("data:audio/") ? sound : "";
+            const soundIndex = text.indexOf(SOUND_PLACEHOLDER);
+
+            if (!soundUrl || soundIndex === -1) {
+                await playSpeech(text.replaceAll(SOUND_PLACEHOLDER, ""), voice);
+                resolve();
+                return;
+            }
+
+            const beforeSound = text.slice(0, soundIndex);
+            const afterSound = text.slice(soundIndex + SOUND_PLACEHOLDER.length).replaceAll(SOUND_PLACEHOLDER, "");
+
+            if (await playSpeech(beforeSound, voice)) {
+                const soundCompleted = await playAudio(soundUrl, 1);
+                if (soundCompleted) await playSpeech(afterSound, voice);
+            }
+
+            resolve();
         })().catch(() => resolve());
     });
 }
@@ -691,7 +691,12 @@ function playSample(tempSettings: any, type: string) {
             currentUser.globalName ?? currentUser.username,
             (myGuildId ? GuildMemberStore.getNick(myGuildId, currentUser.id) : null) ?? currentUser.username,
             settingsobj.latinOnly
-        )
+        ),
+        undefined,
+        undefined,
+        "main",
+        undefined,
+        settingsobj[type + "Sound"]
     );
 }
 
@@ -716,27 +721,6 @@ const settings = definePluginSettings({
         markers: [0.1, 0.5, 1, 2, 5, 10],
         stickToMarkers: false,
     },
-    soundMode: {
-        type: OptionType.SELECT,
-        description: "Custom sound mode.",
-        options: [
-            { label: "Off", value: "off" },
-            { label: "TTS then sound", value: "ttsFirst" },
-            { label: "Sound then TTS", value: "soundFirst" },
-        ],
-        default: "off",
-    },
-    customSound: {
-        type: OptionType.COMPONENT,
-        component: () => <CustomSoundSettings />,
-        default: "",
-    },
-    customSoundName: {
-        type: OptionType.STRING,
-        description: "Custom sound file name.",
-        default: "",
-        hidden: true,
-    },
     sayOwnName: {
         description: "Say own name",
         type: OptionType.BOOLEAN,
@@ -755,18 +739,51 @@ const settings = definePluginSettings({
     },
     joinMessage: {
         type: OptionType.STRING,
-        description: "Placeholders: {{USER}}, {{DISPLAY_NAME}}, {{NICKNAME}}, {{CHANNEL}}",
+        description: "Placeholders: {{USER}}, {{DISPLAY_NAME}}, {{NICKNAME}}, {{CHANNEL}}, {{SOUND}}.",
         default: "{{DISPLAY_NAME}} joined",
+    },
+    joinSound: {
+        type: OptionType.COMPONENT,
+        component: () => <CustomSoundSettings soundKey="joinSound" nameKey="joinSoundName" title="Join sound" />,
+        default: "",
+    },
+    joinSoundName: {
+        type: OptionType.STRING,
+        description: "Join sound file name.",
+        default: "",
+        hidden: true,
     },
     leaveMessage: {
         type: OptionType.STRING,
-        description: "Leave Message",
+        description: "Leave message. Use {{SOUND}} to play the selected sound.",
         default: "{{DISPLAY_NAME}} left",
+    },
+    leaveSound: {
+        type: OptionType.COMPONENT,
+        component: () => <CustomSoundSettings soundKey="leaveSound" nameKey="leaveSoundName" title="Leave sound" />,
+        default: "",
+    },
+    leaveSoundName: {
+        type: OptionType.STRING,
+        description: "Leave sound file name.",
+        default: "",
+        hidden: true,
     },
     moveMessage: {
         type: OptionType.STRING,
-        description: "Move Message",
+        description: "Move message. Use {{SOUND}} to play the selected sound.",
         default: "{{DISPLAY_NAME}} moved to {{CHANNEL}}",
+    },
+    moveSound: {
+        type: OptionType.COMPONENT,
+        component: () => <CustomSoundSettings soundKey="moveSound" nameKey="moveSoundName" title="Move sound" />,
+        default: "",
+    },
+    moveSoundName: {
+        type: OptionType.STRING,
+        description: "Move sound file name.",
+        default: "",
+        hidden: true,
     },
     announceOthersMute: {
         description: "Announce when other users mute/unmute in your current VC",
@@ -1147,7 +1164,14 @@ export default definePlugin({
                             const nickname = u && ((myGuildId ? GuildMemberStore.getNick(myGuildId, userId) : null) ?? displayName);
                             const channel = ChannelStore.getChannel(id)?.name ?? "channel";
 
-                            queueSpeak(formatText(template, u, channel, displayName, nickname, settings.store.latinOnly), userId);
+                            queueSpeak(
+                                formatText(template, u, channel, displayName, nickname, settings.store.latinOnly),
+                                userId,
+                                undefined,
+                                "main",
+                                undefined,
+                                settings.store[type + "Sound"]
+                            );
                         }
                     }
 
