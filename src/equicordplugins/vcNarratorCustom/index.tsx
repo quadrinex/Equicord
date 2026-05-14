@@ -40,6 +40,7 @@ import {
     SearchableSelect,
     SelectedChannelStore,
     SelectedGuildStore,
+    showToast,
     useMemo,
     UserStore,
     VoiceStateStore,
@@ -69,6 +70,7 @@ import {
 const cl = classNameFactory("vc-narrator-");
 
 const API_BASE = "https://tiktok-tts-aio.exampleuser.workers.dev";
+const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "m4a", "aac", "flac", "webm", "wma", "mp4"];
 
 type LastApiCallStatus = {
     at: number;
@@ -171,6 +173,98 @@ function TroubleshootingSettings() {
                 <span className={apiStatusClass}>{apiStatus.message}</span>
                 <span className={cl("api-time")}> • {lastApiAt}</span>
             </Forms.FormText>
+        </div>
+    );
+}
+
+function CustomSoundSettings() {
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const [busy, setBusy] = React.useState(false);
+    const [, forceUpdate] = React.useReducer((count: number) => count + 1, 0);
+    const customSoundName = settings.store.customSoundName ?? "";
+    const hasCustomSound = typeof settings.store.customSound === "string" && settings.store.customSound.startsWith("data:audio/");
+
+    const uploadSound = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.currentTarget.files?.[0];
+        if (!file) return;
+
+        const extension = file.name.split(".").pop()?.toLowerCase();
+        if (!extension || !AUDIO_EXTENSIONS.includes(extension)) {
+            showToast("Please choose an audio file.");
+            event.currentTarget.value = "";
+            return;
+        }
+
+        setBusy(true);
+        try {
+            const dataUri = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(String(reader.result ?? ""));
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+
+            if (!dataUri.startsWith("data:audio/")) {
+                showToast("Please choose an audio file.");
+                return;
+            }
+
+            settings.store.customSound = dataUri;
+            settings.store.customSoundName = file.name;
+            forceUpdate();
+            showToast("Custom sound saved.");
+        } catch {
+            showToast("Could not load that audio file.");
+        } finally {
+            event.currentTarget.value = "";
+            setBusy(false);
+        }
+    };
+
+    const previewSound = () => {
+        if (!hasCustomSound) return;
+
+        setBusy(true);
+        const audio = new Audio(settings.store.customSound);
+        audio.volume = settings.store.volume;
+        audio.onended = () => setBusy(false);
+        audio.onerror = () => setBusy(false);
+        audio.play().catch(() => setBusy(false));
+    };
+
+    return (
+        <div className={cl("custom-sound")}>
+            <Forms.FormTitle tag="h3" className={cl("title")}>Custom sound</Forms.FormTitle>
+            <Forms.FormText className={cl("custom-sound-text")}>
+                {hasCustomSound ? `Selected: ${customSoundName || "Custom audio"}` : "No custom sound selected."}
+            </Forms.FormText>
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.wma,.mp4"
+                className={cl("file-input")}
+                onChange={uploadSound}
+            />
+            <div className={cl("buttons")}>
+                <Button variant="secondary" size="small" disabled={busy} onClick={() => fileInputRef.current?.click()}>
+                    Choose file
+                </Button>
+                <Button variant="secondary" size="small" disabled={busy || !hasCustomSound} onClick={previewSound}>
+                    Preview
+                </Button>
+                <Button
+                    variant="dangerPrimary"
+                    size="small"
+                    disabled={busy || !hasCustomSound}
+                    onClick={() => {
+                        settings.store.customSound = "";
+                        settings.store.customSoundName = "";
+                        forceUpdate();
+                    }}
+                >
+                    Clear
+                </Button>
+            </div>
         </div>
     );
 }
@@ -321,25 +415,61 @@ function queueSpeak(text: string, userId?: string, interruptKey?: string, queue:
 
 async function speak(text: string, userId?: string, interruptKey?: string, useDefaultVoice?: boolean): Promise<void> {
     return new Promise(resolve => {
-        const onEnd = () => {
-            if (currentStop === onEnd) {
+        const playAudio = (url: string, playbackRate: number) => new Promise<boolean>(resolveAudio => {
+            const audio = new Audio(url);
+            let settled = false;
+
+            const finish = (completed: boolean) => {
+                if (settled) return;
+                settled = true;
+                if (currentStop === stop) {
+                    currentAudio = null;
+                    currentInterruptKey = undefined;
+                    currentStop = null;
+                }
+                resolveAudio(completed);
+            };
+
+            const stop = () => finish(false);
+
+            audio.volume = settings.store.volume;
+            audio.playbackRate = playbackRate;
+            audio.onended = () => finish(true);
+            audio.onerror = stop;
+            currentAudio = audio;
+            currentInterruptKey = interruptKey;
+            currentStop = stop;
+            audio.play().catch(stop);
+        });
+
+        const playSequence = async (ttsUrl: string) => {
+            const { customSound, soundMode = "off" } = settings.store;
+            const hasCustomSound = typeof customSound === "string" && customSound.startsWith("data:audio/");
+
+            if (soundMode === "soundFirst" && hasCustomSound) {
+                const completed = await playAudio(customSound, 1);
+                if (!completed) {
+                    resolve();
+                    return;
+                }
+            }
+
+            const ttsCompleted = await playAudio(ttsUrl, settings.store.rate);
+            if (!ttsCompleted) {
+                resolve();
+                return;
+            }
+
+            if (soundMode === "ttsFirst" && hasCustomSound) {
+                await playAudio(customSound, 1);
+            }
+
+            if (currentAudio) {
                 currentAudio = null;
                 currentInterruptKey = undefined;
                 currentStop = null;
             }
             resolve();
-        };
-
-        const playAudio = (url: string) => {
-            const audio = new Audio(url);
-            audio.volume = settings.store.volume;
-            audio.playbackRate = settings.store.rate;
-            audio.onended = onEnd;
-            audio.onerror = onEnd;
-            currentAudio = audio;
-            currentInterruptKey = interruptKey;
-            currentStop = onEnd;
-            audio.play().catch(onEnd);
         };
 
         void (async () => {
@@ -354,7 +484,7 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
             const cacheKey = `${voice}_${text}`;
 
             if (ttsCache.has(cacheKey)) {
-                playAudio(ttsCache.get(cacheKey)!);
+                await playSequence(ttsCache.get(cacheKey)!);
                 return;
             }
 
@@ -363,7 +493,7 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
                 if (cachedBlob) {
                     const url = URL.createObjectURL(cachedBlob);
                     ttsCache.set(cacheKey, url);
-                    playAudio(url);
+                    await playSequence(url);
                     return;
                 }
             } catch (err) {
@@ -403,13 +533,13 @@ async function speak(text: string, userId?: string, interruptKey?: string, useDe
                 ttsCache.set(cacheKey, url);
                 setCachedVoiceInDB(cacheKey, blob).catch(console.error);
 
-                playAudio(url);
+                await playSequence(url);
             } catch (e) {
                 recordApiError(e);
                 console.error("TTS Network Error:", e);
                 resolve();
             }
-        })().catch(onEnd);
+        })().catch(() => resolve());
     });
 }
 
@@ -585,6 +715,27 @@ const settings = definePluginSettings({
         default: 1,
         markers: [0.1, 0.5, 1, 2, 5, 10],
         stickToMarkers: false,
+    },
+    soundMode: {
+        type: OptionType.SELECT,
+        description: "Custom sound mode.",
+        options: [
+            { label: "Off", value: "off" },
+            { label: "TTS then sound", value: "ttsFirst" },
+            { label: "Sound then TTS", value: "soundFirst" },
+        ],
+        default: "off",
+    },
+    customSound: {
+        type: OptionType.COMPONENT,
+        component: () => <CustomSoundSettings />,
+        default: "",
+    },
+    customSoundName: {
+        type: OptionType.STRING,
+        description: "Custom sound file name.",
+        default: "",
+        hidden: true,
     },
     sayOwnName: {
         description: "Say own name",
