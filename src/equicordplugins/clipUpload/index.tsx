@@ -12,7 +12,7 @@ import definePlugin from "@utils/types";
 import { findByCodeLazy } from "@webpack";
 import { Menu } from "@webpack/common";
 
-import type { ClipMetadata } from "./upload";
+import { abortActiveClipUploads, type ClipMetadata } from "./upload";
 import { openUploadClipFileModal } from "./UploadClipFileModal";
 
 const ActionBarIcon = findByCodeLazy("Children.map", "isValidElement", "dangerous:");
@@ -29,10 +29,6 @@ const ctxMenuPatch: NavContextMenuPatchCallback = (children, props) => {
         <Menu.MenuItem
             id="vc-upload-clip-file"
             iconLeft={CloudUploadIcon}
-            leadingAccessory={{
-                type: "icon",
-                icon: CloudUploadIcon
-            }}
             label="Upload Clip File"
             action={() => openUploadClipFileModal(props.channel.id)}
         />
@@ -58,6 +54,8 @@ export default definePlugin({
     contextMenus: {
         "channel-attach": ctxMenuPatch
     },
+
+    stop: abortActiveClipUploads,
 
     UploadClipFileButton: ErrorBoundary.wrap(({ channelId, clip }: ClipUploadActionProps) => {
         if (!clip) return null;

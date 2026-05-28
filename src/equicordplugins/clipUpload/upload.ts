@@ -12,6 +12,7 @@ const Native = VencordNative.pluginHelpers.ClipUpload as PluginNative<typeof imp
 
 const defaultFileName = "clip.mp4";
 const compatibleExtensions = [".mp4", ".m4v"];
+const uploadAbortControllers = new Set<AbortController>();
 
 export interface ClipMetadata {
     name?: unknown;
@@ -66,6 +67,14 @@ function isClipMetadataWriter(value: unknown): value is ClipMetadataWriter {
 
 export function getString(value: unknown) {
     return typeof value === "string" ? value : undefined;
+}
+
+export function abortActiveClipUploads() {
+    for (const controller of uploadAbortControllers) {
+        controller.abort();
+    }
+
+    uploadAbortControllers.clear();
 }
 
 export function getClipTitleFromName(name: string) {
@@ -180,6 +189,8 @@ async function reserveClipUpload(options: ClipUploadOptions, file: File) {
 }
 
 export async function uploadClipFile(file: File, options: ClipUploadOptions) {
+    let uploadAbortController: AbortController | undefined;
+
     try {
         showToast("Checking clip file.", Toasts.Type.MESSAGE);
 
@@ -187,9 +198,13 @@ export async function uploadClipFile(file: File, options: ClipUploadOptions) {
         const attachment = await reserveClipUpload(options, uploadFile);
         if (!attachment) throw new Error("Discord did not return an upload slot.");
 
+        uploadAbortController = new AbortController();
+        uploadAbortControllers.add(uploadAbortController);
+
         const uploadResponse = await fetch(attachment.upload_url, {
             method: "PUT",
             body: uploadFile,
+            signal: uploadAbortController.signal,
             referrer: "https://discord.com/",
             referrerPolicy: "strict-origin-when-cross-origin",
             mode: "cors",
@@ -232,10 +247,13 @@ export async function uploadClipFile(file: File, options: ClipUploadOptions) {
     } catch (error) {
         showToast(getErrorMessage(error), Toasts.Type.FAILURE);
         return false;
+    } finally {
+        if (uploadAbortController) uploadAbortControllers.delete(uploadAbortController);
     }
 }
 
 function getErrorMessage(error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") return "Upload canceled.";
     if (error instanceof Error) return error.message;
 
     if (isObject(error)) {

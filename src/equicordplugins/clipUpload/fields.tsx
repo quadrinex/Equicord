@@ -6,7 +6,7 @@
 
 import { Flex } from "@components/Flex";
 import { getTheme, Theme } from "@utils/discord";
-import { ApplicationStore, Button, Checkbox, Forms, IconUtils, RunningGameStore, SearchableSelect, TextArea, TextInput, UserStore, useState, useStateFromStores } from "@webpack/common";
+import { ApplicationStore, Button, Checkbox, Forms, IconUtils, lodash, RunningGameStore, SearchableSelect, TextArea, TextInput, UserStore, useState, useStateFromStores } from "@webpack/common";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { getString } from "./upload";
@@ -126,7 +126,7 @@ export function ParticipantField({ value, onChange, disabled }: ParticipantField
                 value: id
             }))
         ];
-    }, [value]);
+    }, [value], lodash.isEqual);
     const trimmedCustomId = customId.trim();
     const canAddCustomId = isSnowflake(trimmedCustomId) && !value.includes(trimmedCustomId) && !disabled;
 
@@ -206,7 +206,7 @@ function getApplicationOptions(selectedId: string) {
 }
 
 export function ApplicationField({ value, onChange, disabled }: ApplicationFieldProps) {
-    const options = useStateFromStores([RunningGameStore, ApplicationStore], () => getApplicationOptions(value), [value]);
+    const options = useStateFromStores([RunningGameStore, ApplicationStore], () => getApplicationOptions(value), [value], lodash.isEqual);
 
     return (
         <section>

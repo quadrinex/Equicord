@@ -6,10 +6,10 @@
 
 import { Flex } from "@components/Flex";
 import type { RenderModalProps } from "@vencord/discord-types";
-import { Button, Forms, Modal, openModal, useState } from "@webpack/common";
+import { Button, Forms, Modal, openModal, useEffect, useState } from "@webpack/common";
 
 import { ApplicationField, BooleanField, DateTimeField, getDateTimeLocalValue, ParticipantField, TextField } from "./fields";
-import { type ClipMetadata, getClipCreatedAt, getClipTitleFromName, getDefaultClipTitle, getDefaultFileName, getParticipantIds, getString, isValidDate, pickClipFile, uploadClipFile } from "./upload";
+import { abortActiveClipUploads, type ClipMetadata, getClipCreatedAt, getClipTitleFromName, getDefaultClipTitle, getDefaultFileName, getParticipantIds, getString, isValidDate, pickClipFile, uploadClipFile } from "./upload";
 
 export function openUploadClipFileModal(channelId: string, clip?: ClipMetadata | null) {
     openModal(modalProps => (
@@ -39,6 +39,8 @@ function UploadClipFileModal({ modalProps, channelId, clip }: { modalProps: Rend
     const notice = createdAt && !isValidDate(createdAt)
         ? { message: "Created at must be a valid date.", type: "critical" as const }
         : undefined;
+
+    useEffect(() => abortActiveClipUploads, []);
 
     async function chooseClipFile() {
         const picked = await pickClipFile();

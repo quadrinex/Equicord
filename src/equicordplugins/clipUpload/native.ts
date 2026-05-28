@@ -23,6 +23,7 @@ function getMimeType(path: string) {
 
 export async function chooseVideoFile(_event: IpcMainInvokeEvent) {
     try {
+        // chooseFile cannot expose the native path needed by updateClipMetadata.
         const { filePaths } = await dialog.showOpenDialog({
             title: "Select clip file",
             filters: [
