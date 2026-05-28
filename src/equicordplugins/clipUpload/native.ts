@@ -26,7 +26,7 @@ export async function chooseVideoFile(_event: IpcMainInvokeEvent) {
         const { filePaths } = await dialog.showOpenDialog({
             title: "Select clip file",
             filters: [
-                { name: "Video", extensions: ["mp4", "m4v", "mov", "webm"] },
+                { name: "Video", extensions: ["mp4", "m4v"] },
                 { name: "All Files", extensions: ["*"] }
             ],
             properties: ["openFile"]
